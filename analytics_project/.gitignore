@@ -1,0 +1,17 @@
+# Byte-compiled / optimized / DLL files
+.venv/
+__pycache__/
+*.pyc
+# Ignore dbt artifacts
+dbt_modules/
+dbt_packages/
+target/
+logs/
+
+# Ignore dbt profiles
+profiles.yml
+
+
+# IDE and editor folders
+.vscode/
+.idea/

@@ -1,0 +1,131 @@
+# General
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+*.swp
+*~
+
+# Node / JavaScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log
+.next/
+dist/
+build/
+*.tgz
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+env/
+venv/
+ENV/
+.venv/
+env.bak/
+.tox/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+*.egg
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# Data, models, caches, outputs (common for RAG/ML projects)
+data/
+datasets/
+dataset/
+data_processed/
+outputs/
+results/
+logs/
+checkpoints/
+models/
+saved_models/
+weights/
+mlruns/
+\.cache/
+.cache/
+huggingface/
+.huggingface/
+transformers_cache/
+huggingface_cache/
+*.ckpt
+*.pt
+*.pth
+*.h5
+*.bin
+*.safetensors
+*.tar.gz
+*.tar
+*.zip
+*.npz
+*.npy
+*.db
+*.sqlite
+*.sqlite3
+
+# Hugging Face / token caches (local user caches -- keep local only)
+# (home-directory caches can't be ignored from repo, but ignore common repo-level cache dirs)
+hf_cache/
+hf_models/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.iml
+
+# OS / environment
+.env
+secrets.*
+*.pem
+*.key
+*.crt
+aws_credentials
+credentials
+google_credentials.json
+azure_credentials
+
+# Containers / virtualization
+docker-compose.override.yml
+.docker/
+*.stackdump
+
+# CI / build artifacts
+.gradle/
+target/
+dist/
+public/
+build/
+release/
+
+# DVC / data versioning
+.dvc/
+*.dvc
+.dvcignore
+
+# Git LFS pointer files (if you use LFS you may want to exclude raw large files instead)
+# Add raw large file patterns here if you track them with LFS:
+# *.h5
+# *.pt
+# *.ckpt
+
+# Misc
+coverage.xml
+nosetests.xml
+*.log
