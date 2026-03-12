@@ -1,15 +1,15 @@
 """
-claude_client.py — single wrapper around the Anthropic API.
-All Claude calls go through here. Token budget enforced centrally.
-
-Token strategy:
-  - MODEL_FAST  (haiku)  → classifications, short labels, rule summaries
-  - MODEL_SMART (sonnet) → SQL analysis, metadata explanation, dbt generation
+claude_client.py — LLM wrapper using Ollama (local, free).
+Logs every request and response to terminal + logs/llm.log for debugging.
 """
 
-import anthropic
+import time
+import logging
+import os
+from openai import OpenAI
 from src.config import (
-    ANTHROPIC_API_KEY,
+    OLLAMA_BASE_URL,
+    OLLAMA_API_KEY,
     MODEL_FAST,
     MODEL_SMART,
     MAX_TOKENS_QUERY_ANALYSIS,
@@ -17,70 +17,87 @@ from src.config import (
     MAX_TOKENS_DBT_GENERATION,
 )
 
-# single shared client — instantiated once at import time
-_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+# ── Logger setup ───────────────────────────────────────────────────────────────
+os.makedirs("logs", exist_ok=True)
+
+logger = logging.getLogger("llm")
+logger.setLevel(logging.DEBUG)
+
+# format: timestamp | level | message
+_fmt = logging.Formatter("%(asctime)s | %(levelname)-7s | %(message)s", datefmt="%H:%M:%S")
+
+# handler 1 — terminal (you see this in the streamlit console)
+_console = logging.StreamHandler()
+_console.setFormatter(_fmt)
+
+# handler 2 — file (persists across restarts)
+_file = logging.FileHandler("logs/llm.log", encoding="utf-8")
+_file.setFormatter(_fmt)
+
+logger.addHandler(_console)
+logger.addHandler(_file)
+
+# ── Ollama client ──────────────────────────────────────────────────────────────
+logger.info(f"Connecting to Ollama at {OLLAMA_BASE_URL}")
+_client = OpenAI(
+    base_url = OLLAMA_BASE_URL,
+    api_key  = OLLAMA_API_KEY,
+)
+logger.info("Ollama client ready")
 
 
-def _call(model: str, prompt: str, max_tokens: int) -> str:
+# ── Core call function ─────────────────────────────────────────────────────────
+def _call(model: str, prompt: str, max_tokens: int, caller: str = "unknown") -> str:
     """
-    Internal function — makes the actual API call.
-    Returns the response text as a string.
-    All other functions in this file call this one.
+    Makes the actual call to Ollama. Logs everything:
+      - what function triggered it
+      - model used
+      - prompt size
+      - how long it took
+      - first 120 chars of response (to confirm it came back)
     """
-    message = _client.messages.create(
-        model      = model,
-        max_tokens = max_tokens,
-        messages   = [{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
+    prompt_chars = len(prompt)
+    prompt_preview = prompt[:80].replace("\n", " ")
+
+    logger.info(f"─── REQUEST ── caller={caller} model={model} max_tokens={max_tokens}")
+    logger.debug(f"  prompt_chars : {prompt_chars}")
+    logger.debug(f"  prompt_start : {prompt_preview!r}...")
+
+    start = time.perf_counter()
+
+    try:
+        response = _client.chat.completions.create(
+            model      = model,
+            max_tokens = max_tokens,
+            messages   = [{"role": "user", "content": prompt}],
+        )
+        elapsed = time.perf_counter() - start
+        text    = response.choices[0].message.content
+
+        logger.info(f"─── RESPONSE ─ caller={caller} elapsed={elapsed:.2f}s response_chars={len(text)}")
+        logger.debug(f"  response_start : {text[:120].replace(chr(10), ' ')!r}...")
+
+        return text
+
+    except Exception as e:
+        elapsed = time.perf_counter() - start
+        logger.error(f"─── ERROR ──── caller={caller} elapsed={elapsed:.2f}s error={e}")
+        raise
 
 
-# ── Public functions — one per feature ────────────────────────────────────────
+# ── Public functions ───────────────────────────────────────────────────────────
 
 def analyze_query(prompt: str) -> str:
-    """
-    Used by: Query Analyzer tab
-    Model: Sonnet (complex SQL reasoning)
-    """
-    return _call(
-        model      = MODEL_SMART,
-        prompt     = prompt,
-        max_tokens = MAX_TOKENS_QUERY_ANALYSIS,
-    )
+    return _call(MODEL_SMART, prompt, MAX_TOKENS_QUERY_ANALYSIS, caller="analyze_query")
 
 
 def explain_metadata(prompt: str) -> str:
-    """
-    Used by: Table Explainer tab
-    Model: Sonnet (business context inference)
-    """
-    return _call(
-        model      = MODEL_SMART,
-        prompt     = prompt,
-        max_tokens = MAX_TOKENS_METADATA,
-    )
+    return _call(MODEL_SMART, prompt, MAX_TOKENS_METADATA, caller="explain_metadata")
 
 
 def generate_dbt(prompt: str) -> str:
-    """
-    Used by: dbt Generator tab
-    Model: Sonnet (code generation)
-    """
-    return _call(
-        model      = MODEL_SMART,
-        prompt     = prompt,
-        max_tokens = MAX_TOKENS_DBT_GENERATION,
-    )
+    return _call(MODEL_SMART, prompt, MAX_TOKENS_DBT_GENERATION, caller="generate_dbt")
 
 
 def quick_label(prompt: str) -> str:
-    """
-    Used by: any feature that needs a fast, cheap classification.
-    Example: "Is this a fact table or dimension table? Reply in one word."
-    Model: Haiku (simple yes/no or short labels)
-    """
-    return _call(
-        model      = MODEL_FAST,
-        prompt     = prompt,
-        max_tokens = 100,                   # very small cap for labeling
-    )
+    return _call(MODEL_FAST, prompt, 100, caller="quick_label")

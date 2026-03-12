@@ -6,7 +6,9 @@ Main Streamlit entry point. 3 tabs:
   3. dbt Generator    — describe what you want, get model SQL + schema.yml
 """
 
+import time
 import streamlit as st
+from openai import OpenAI
 from src.snowflake_client import (
     get_databases, get_schemas, get_tables,
     get_table_metadata, get_query_history,
@@ -30,6 +32,26 @@ st.set_page_config(
 st.title("🤖 Autonomous Analytics Engineer")
 st.caption("AI-powered SQL analysis, metadata explanation, and dbt generation for Snowflake.")
 st.divider()
+
+# ── Sidebar: live connection status ───────────────────────────────────────────
+with st.sidebar:
+    st.header("System Status")
+
+    # Ollama ping
+    try:
+        _ping_client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+        _t0 = time.perf_counter()
+        _ping_client.models.list()          # lightweight call — just lists available models
+        _ping_ms = int((time.perf_counter() - _t0) * 1000)
+        st.success(f"Ollama  ✅  {_ping_ms}ms")
+    except Exception as _e:
+        st.error(f"Ollama  ❌  {_e}")
+
+    from src.config import MODEL_SMART
+    st.caption(f"Model: `{MODEL_SMART}`")
+    st.caption("Logs: `logs/llm.log`")
+    st.divider()
+    st.caption("Each request is timed and logged to the terminal and log file.")
 
 # ── 3 Tabs ─────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs([

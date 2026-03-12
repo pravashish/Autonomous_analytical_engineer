@@ -6,7 +6,7 @@ Every other file imports from here. Nothing reads .env directly.
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # reads .env file into os.environ
+load_dotenv()
 
 # ── Snowflake ──────────────────────────────────────────────────────────────────
 SNOWFLAKE_ACCOUNT    = os.getenv("SNOWFLAKE_ACCOUNT")
@@ -17,26 +17,30 @@ SNOWFLAKE_WAREHOUSE  = os.getenv("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
 SNOWFLAKE_DATABASE   = os.getenv("SNOWFLAKE_DATABASE",  "ANALYTICS_DEMO")
 SNOWFLAKE_SCHEMA     = os.getenv("SNOWFLAKE_SCHEMA",    "MARTS")
 
-# ── Claude API ─────────────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY")
+# ── Ollama (local LLM — completely free, no API key needed) ───────────────────
+OLLAMA_BASE_URL = "http://localhost:11434/v1"   # Ollama's OpenAI-compatible endpoint
+OLLAMA_API_KEY  = "ollama"                      # placeholder — Ollama ignores this value
 
-# ── Model routing (token budget strategy) ─────────────────────────────────────
-# Haiku  = fast + cheap  → use for simple tasks (rule labeling, short summaries)
-# Sonnet = smart + slower → use for deep analysis (SQL optimization, dbt generation)
-MODEL_FAST   = "claude-3-5-haiku-20241022"   # ~25x cheaper than Sonnet
-MODEL_SMART  = "claude-sonnet-4-5"          # use only when complexity demands it
+# ── Model routing ──────────────────────────────────────────────────────────────
+# GPU available  → keep qwen2.5-coder:7b  (fast, high quality)
+# CPU only       → switch to qwen2.5-coder:1.5b (4x faster, still decent for SQL)
+# Check which you have: run `ollama ps` while a request is in flight
+#   PROCESSOR = 100% GPU → fast, keep 7b
+#   PROCESSOR = 100% CPU → slow, switch to 1.5b below
+MODEL_FAST  = "qwen2.5-coder:1.5b"   # lightweight — labels, quick classifications
+MODEL_SMART = "qwen2.5-coder:1.5b"   # change back to 7b if you have GPU
 
-# ── Token caps per call (hard limits to protect your budget) ──────────────────
-MAX_TOKENS_QUERY_ANALYSIS  = 1200   # query analyzer response
-MAX_TOKENS_METADATA        = 800    # table explainer response
-MAX_TOKENS_DBT_GENERATION  = 1500   # dbt model + yaml + tests
+# ── Token caps ────────────────────────────────────────────────────────────────
+MAX_TOKENS_QUERY_ANALYSIS  = 800    # reduced from 1200 — faster on CPU
+MAX_TOKENS_METADATA        = 600    # reduced from 800
+MAX_TOKENS_DBT_GENERATION  = 1000   # reduced from 1500
 
 # ── Snowflake query limits ─────────────────────────────────────────────────────
-QUERY_HISTORY_LIMIT  = 20   # max recent queries to fetch
-SAMPLE_ROWS_LIMIT    = 5    # max sample rows to send to Claude
-MAX_COLUMNS_TO_SEND  = 20   # cap columns sent in metadata prompts
+QUERY_HISTORY_LIMIT  = 20
+SAMPLE_ROWS_LIMIT    = 5
+MAX_COLUMNS_TO_SEND  = 20
 
 # ── Output paths ──────────────────────────────────────────────────────────────
-OUTPUT_SQL_DIR   = "outputs/generated_sql"
-OUTPUT_YAML_DIR  = "outputs/generated_yaml"
+OUTPUT_SQL_DIR    = "outputs/generated_sql"
+OUTPUT_YAML_DIR   = "outputs/generated_yaml"
 OUTPUT_REPORT_DIR = "outputs/reports"
