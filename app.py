@@ -1,26 +1,20 @@
 """
 app.py — Autonomous Analytics Engineer
-Main Streamlit entry point. 3 tabs:
-  1. Query Analyzer   — paste SQL, get analysis + optimized rewrite
-  2. Table Explainer  — select a table, get business meaning + dbt tests
-  3. dbt Generator    — describe what you want, get model SQL + schema.yml
+Streamlit entry point. 3 tabs, each backed by an analyzer module.
 """
 
 import time
+import pandas as pd
 import streamlit as st
 from openai import OpenAI
-from src.snowflake_client import (
-    get_databases, get_schemas, get_tables,
-    get_table_metadata, get_query_history,
-)
-from src.claude_client    import analyze_query, explain_metadata, generate_dbt
-from src.prompts          import query_analysis_prompt, metadata_explanation_prompt, dbt_generation_prompt
-from src.rules            import check_query, severity_score
-from src.utils.sql_utils  import clean_sql, format_sql, trim_sql
-from src.utils.formatting import (
-    render_rule_flags, render_claude_output,
-    render_sql_block, render_yaml_block, render_severity_badge,
-)
+
+from src.snowflake_client import get_databases, get_schemas, get_tables, get_query_history
+from src.analyzers.query_analyzer    import run as analyze_sql
+from src.analyzers.metadata_explainer import run as explain_table
+from src.analyzers.dbt_generator      import run as generate_dbt_model
+from src.utils.formatting import render_rule_flags, render_claude_output, render_severity_badge
+from src.utils.sql_utils  import format_sql
+from src.config import MODEL_SMART
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -29,36 +23,25 @@ st.set_page_config(
     layout     = "wide",
 )
 
-st.title("🤖 Autonomous Analytics Engineer")
-st.caption("AI-powered SQL analysis, metadata explanation, and dbt generation for Snowflake.")
-st.divider()
-
-# ── Sidebar: live connection status ───────────────────────────────────────────
+# ── Sidebar: live status ───────────────────────────────────────────────────────
 with st.sidebar:
     st.header("System Status")
-
-    # Ollama ping
     try:
-        _ping_client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-        _t0 = time.perf_counter()
-        _ping_client.models.list()          # lightweight call — just lists available models
-        _ping_ms = int((time.perf_counter() - _t0) * 1000)
-        st.success(f"Ollama  ✅  {_ping_ms}ms")
+        _c = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+        _t = time.perf_counter()
+        _c.models.list()
+        st.success(f"Ollama  ✅  {int((time.perf_counter()-_t)*1000)}ms")
     except Exception as _e:
-        st.error(f"Ollama  ❌  {_e}")
-
-    from src.config import MODEL_SMART
+        st.error(f"Ollama  ❌  not running")
     st.caption(f"Model: `{MODEL_SMART}`")
-    st.caption("Logs: `logs/llm.log`")
-    st.divider()
-    st.caption("Each request is timed and logged to the terminal and log file.")
+    st.caption("Logs → `logs/llm.log`")
 
-# ── 3 Tabs ─────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs([
-    "🔍 Query Analyzer",
-    "📋 Table Explainer",
-    "🛠 dbt Generator",
-])
+# ── Header ─────────────────────────────────────────────────────────────────────
+st.title("🤖 Autonomous Analytics Engineer")
+st.caption("SQL analysis · table documentation · dbt generation — runs locally with Ollama.")
+st.divider()
+
+tab1, tab2, tab3 = st.tabs(["🔍 Query Analyzer", "📋 Table Explainer", "🛠 dbt Generator"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -66,75 +49,75 @@ tab1, tab2, tab3 = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
     st.header("Query Analyzer")
-    st.write("Paste a SQL query or load one from your Snowflake query history.")
 
-    # ── Input method toggle ────────────────────────────────────────────────────
     input_mode = st.radio(
         "Input method",
-        ["Paste SQL manually", "Load from query history"],
-        horizontal = True,
+        ["Paste SQL manually", "Load from Snowflake query history"],
+        horizontal=True,
     )
 
     sql_input = ""
 
     if input_mode == "Paste SQL manually":
         sql_input = st.text_area(
-            "Paste your SQL here",
-            height      = 200,
-            placeholder = "SELECT * FROM arr_program_fact WHERE ...",
+            "SQL",
+            height=200,
+            placeholder="SELECT * FROM arr_program_fact WHERE ...",
         )
-
     else:
-        # ── Load from Snowflake query history ──────────────────────────────────
-        with st.spinner("Loading recent queries from Snowflake..."):
+        with st.spinner("Loading query history from Snowflake..."):
             try:
                 history_df = get_query_history()
                 if history_df.empty:
-                    st.info("No recent SELECT queries found in query history.")
+                    st.info("No recent SELECT queries found.")
                 else:
-                    # let user pick from the dropdown
-                    selected_idx = st.selectbox(
-                        "Select a query",
-                        options = range(len(history_df)),
-                        format_func = lambda i: (
+                    idx = st.selectbox(
+                        "Select a query (sorted by slowest first)",
+                        range(len(history_df)),
+                        format_func=lambda i: (
                             f"[{history_df.iloc[i]['ELAPSED_SECONDS']}s] "
-                            f"{history_df.iloc[i]['QUERY_TEXT'][:80]}..."
+                            f"{str(history_df.iloc[i]['QUERY_TEXT'])[:80]}..."
                         ),
                     )
-                    selected_row = history_df.iloc[selected_idx]
-                    sql_input    = selected_row["QUERY_TEXT"]
-                    st.caption(
-                        f"⏱ {selected_row['ELAPSED_SECONDS']}s elapsed  |  "
-                        f"💾 {selected_row['MB_SCANNED']} MB scanned  |  "
-                        f"🗂 {selected_row['PARTITIONS_SCANNED']} / "
-                        f"{selected_row['PARTITIONS_TOTAL']} partitions"
-                    )
-                    render_sql_block(format_sql(sql_input), "Selected Query")
+                    row      = history_df.iloc[idx]
+                    sql_input = row["QUERY_TEXT"]
+
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Total Elapsed",   f"{row['ELAPSED_SECONDS']}s")
+                    c2.metric("MB Scanned",      f"{row['MB_SCANNED']} MB")
+                    c3.metric("Rows Produced",   f"{int(row['ROWS_PRODUCED']):,}")
+                    c4.metric("Warehouse",       row['WAREHOUSE_NAME'])
+
+                    with st.expander("View full query"):
+                        st.code(format_sql(sql_input), language="sql")
             except Exception as e:
                 st.error(f"Could not load query history: {e}")
 
-    # ── Analysis ───────────────────────────────────────────────────────────────
-    if st.button("🔍 Analyze Query", type="primary", disabled=not sql_input.strip()):
-        with st.spinner("Running rule checks..."):
-            clean   = clean_sql(sql_input)
-            flags   = check_query(clean)
-            score   = severity_score(flags)
+    if st.button("🔍 Analyze", type="primary", disabled=not sql_input.strip(), key="btn_analyze"):
+        with st.spinner("Running rule checks + AI analysis..."):
+            result = analyze_sql(sql_input)
 
-        col1, col2 = st.columns([1, 2])
+        # ── Results layout ─────────────────────────────────────────────────
+        col_left, col_right = st.columns([1, 2])
 
-        with col1:
-            render_severity_badge(score)
-            render_rule_flags(flags)
+        with col_left:
+            render_severity_badge(result.severity)
+            st.divider()
+            render_rule_flags(result.flags)
 
-        with col2:
-            with st.spinner("Analyzing with AI..."):
-                try:
-                    trimmed  = trim_sql(clean)
-                    prompt   = query_analysis_prompt(trimmed)
-                    response = analyze_query(prompt)
-                    render_claude_output(response)
-                except Exception as e:
-                    st.error(f"Claude API error: {e}")
+        with col_right:
+            if result.success:
+                render_claude_output(result.llm_response)
+                st.divider()
+                st.download_button(
+                    label     = "⬇ Download analysis",
+                    data      = result.llm_response,
+                    file_name = "query_analysis.md",
+                    mime      = "text/markdown",
+                )
+            else:
+                st.error(f"AI analysis failed: {result.llm_error}")
+                st.info("Rule-based checks above still ran successfully.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -142,74 +125,77 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
     st.header("Table Explainer")
-    st.write("Select a table to understand its business purpose, grain, and suggested tests.")
+    st.caption("Select a table to understand its purpose, grain, and suggested tests.")
 
-    # ── Cascading selectors: database → schema → table ─────────────────────────
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with col1:
+    with c1:
         try:
-            databases = get_databases()
-            selected_db = st.selectbox("Database", databases)
+            selected_db = st.selectbox("Database", get_databases(), key="exp_db")
         except Exception as e:
             st.error(f"Cannot load databases: {e}")
             selected_db = None
 
-    with col2:
+    with c2:
+        selected_schema = None
         if selected_db:
             try:
-                schemas = get_schemas(selected_db)
-                selected_schema = st.selectbox("Schema", schemas)
+                selected_schema = st.selectbox("Schema", get_schemas(selected_db), key="exp_schema")
             except Exception as e:
                 st.error(f"Cannot load schemas: {e}")
-                selected_schema = None
-        else:
-            selected_schema = None
 
-    with col3:
+    with c3:
+        selected_table = None
         if selected_db and selected_schema:
             try:
-                tables = get_tables(selected_db, selected_schema)
-                selected_table = st.selectbox("Table", tables)
+                selected_table = st.selectbox("Table", get_tables(selected_db, selected_schema), key="exp_table")
             except Exception as e:
                 st.error(f"Cannot load tables: {e}")
-                selected_table = None
-        else:
-            selected_table = None
 
-    # ── Fetch metadata and explain ─────────────────────────────────────────────
     if st.button("📋 Explain Table", type="primary",
-                 disabled=not (selected_db and selected_schema and selected_table)):
+                 disabled=not (selected_db and selected_schema and selected_table),
+                 key="btn_explain"):
 
-        with st.spinner("Fetching metadata from Snowflake..."):
-            try:
-                metadata = get_table_metadata(selected_db, selected_schema, selected_table)
-            except Exception as e:
-                st.error(f"Cannot fetch metadata: {e}")
-                metadata = None
+        with st.spinner(f"Fetching {selected_table} metadata + running AI analysis..."):
+            result = explain_table(selected_db, selected_schema, selected_table)
 
-        if metadata:
-            st.caption(
-                f"📊 {metadata['row_count']:,} rows  |  "
-                f"📐 {len(metadata['columns'])} columns"
-            )
+        if not result.success and not result.columns:
+            st.error(f"Failed to fetch metadata: {result.llm_error}")
+        else:
+            # ── Table stats ────────────────────────────────────────────────
+            m1, m2 = st.columns(2)
+            m1.metric("Rows",    f"{result.row_count:,}")
+            m2.metric("Columns", result.column_count)
 
-            # show columns as a table
-            with st.expander("View column list"):
-                import pandas as pd
-                st.dataframe(pd.DataFrame(metadata["columns"]), use_container_width=True)
+            col_left, col_right = st.columns([1, 1])
 
-            # show sample rows
-            with st.expander("View sample rows"):
-                st.dataframe(pd.DataFrame(metadata["sample_rows"]), use_container_width=True)
+            with col_left:
+                with st.expander("Column list", expanded=True):
+                    st.dataframe(
+                        pd.DataFrame(result.columns),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                with st.expander("Sample rows"):
+                    st.dataframe(
+                        pd.DataFrame(result.sample_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
-            with st.spinner("Explaining with AI..."):
-                try:
-                    prompt   = metadata_explanation_prompt(metadata)
-                    response = explain_metadata(prompt)
-                    render_claude_output(response)
-                except Exception as e:
-                    st.error(f"Claude API error: {e}")
+            with col_right:
+                if result.success:
+                    render_claude_output(result.llm_response)
+                    st.divider()
+                    st.download_button(
+                        label     = "⬇ Download explanation",
+                        data      = result.llm_response,
+                        file_name = f"{result.table}_explanation.md",
+                        mime      = "text/markdown",
+                    )
+                else:
+                    st.error(f"AI explanation failed: {result.llm_error}")
+                    st.info("Metadata above was fetched successfully.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -217,79 +203,83 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3:
     st.header("dbt Generator")
-    st.write("Describe what you want to build. The agent generates model SQL, schema.yml, and tests.")
+    st.caption("Describe what you want. Get back model SQL, schema.yml, and tests.")
 
-    # ── Source table selection ─────────────────────────────────────────────────
+    # ── Source table ───────────────────────────────────────────────────────────
     st.subheader("1. Pick a source table")
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with col1:
+    with c1:
         try:
-            dbs_dbt = get_databases()
-            dbt_db  = st.selectbox("Database", dbs_dbt, key="dbt_db")
+            dbt_db = st.selectbox("Database", get_databases(), key="dbt_db")
         except:
             dbt_db = None
 
-    with col2:
+    with c2:
+        dbt_schema = None
         if dbt_db:
             try:
-                schemas_dbt = get_schemas(dbt_db)
-                dbt_schema  = st.selectbox("Schema", schemas_dbt, key="dbt_schema")
+                dbt_schema = st.selectbox("Schema", get_schemas(dbt_db), key="dbt_schema")
             except:
-                dbt_schema = None
-        else:
-            dbt_schema = None
+                pass
 
-    with col3:
+    with c3:
+        dbt_table = None
         if dbt_db and dbt_schema:
             try:
-                tables_dbt = get_tables(dbt_db, dbt_schema)
-                dbt_table  = st.selectbox("Table", tables_dbt, key="dbt_table")
+                dbt_table = st.selectbox("Table", get_tables(dbt_db, dbt_schema), key="dbt_table")
             except:
-                dbt_table = None
-        else:
-            dbt_table = None
+                pass
 
-    # ── Business logic prompt ──────────────────────────────────────────────────
+    # ── Business logic ─────────────────────────────────────────────────────────
     st.subheader("2. Describe what you want to build")
     business_logic = st.text_area(
         "Business logic",
-        height      = 120,
-        placeholder = (
-            "Example: Build a monthly ARR summary by program and region. "
-            "Include total ARR, count of new deals, and flag churned programs."
+        height=100,
+        placeholder=(
+            "e.g. Monthly ARR by program and region. "
+            "Include total ARR, count of programs, flag churned rows."
         ),
     )
 
-    # ── Generate ───────────────────────────────────────────────────────────────
-    can_generate = bool(dbt_db and dbt_schema and dbt_table and business_logic.strip())
+    ready = bool(dbt_db and dbt_schema and dbt_table and business_logic.strip())
 
-    if st.button("🛠 Generate dbt Model", type="primary", disabled=not can_generate):
-        with st.spinner("Fetching columns from Snowflake..."):
-            try:
-                meta = get_table_metadata(dbt_db, dbt_schema, dbt_table)
-                columns = meta["columns"]
-            except Exception as e:
-                st.error(f"Cannot fetch columns: {e}")
-                columns = []
+    if st.button("🛠 Generate dbt Model", type="primary", disabled=not ready, key="btn_dbt"):
+        with st.spinner("Fetching columns + generating dbt artifacts..."):
+            result = generate_dbt_model(dbt_db, dbt_schema, dbt_table, business_logic)
 
-        if columns:
-            with st.spinner("Generating dbt model with AI..."):
-                try:
-                    source_ref = f"{dbt_db}.{dbt_schema}.{dbt_table}"
-                    prompt     = dbt_generation_prompt(source_ref, business_logic, columns)
-                    response   = generate_dbt(prompt)
-                    render_claude_output(response)
+        if not result.success:
+            st.error(f"Generation failed: {result.llm_error}")
+        else:
+            st.success(f"Generated for `{result.source_table}`")
 
-                    # ── Save outputs to files ──────────────────────────────────
-                    import os, datetime
-                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_path = f"outputs/generated_sql/{dbt_table}_{ts}.md"
-                    os.makedirs("outputs/generated_sql", exist_ok=True)
-                    with open(output_path, "w") as f:
-                        f.write(f"# Generated dbt model for {source_ref}\n\n")
-                        f.write(response)
-                    st.success(f"✅ Saved to `{output_path}`")
+            col_left, col_right = st.columns(2)
 
-                except Exception as e:
-                    st.error(f"Claude API error: {e}")
+            with col_left:
+                st.markdown("#### Model SQL")
+                if result.model_sql:
+                    st.code(result.model_sql, language="sql")
+                    st.download_button(
+                        label     = "⬇ Download model SQL",
+                        data      = result.model_sql,
+                        file_name = f"{dbt_table.lower()}.sql",
+                        mime      = "text/plain",
+                        key       = "dl_sql",
+                    )
+                else:
+                    st.markdown(result.llm_response)
+
+            with col_right:
+                st.markdown("#### schema.yml")
+                if result.schema_yaml:
+                    st.code(result.schema_yaml, language="yaml")
+                    st.download_button(
+                        label     = "⬇ Download schema.yml",
+                        data      = result.schema_yaml,
+                        file_name = f"{dbt_table.lower()}_schema.yml",
+                        mime      = "text/plain",
+                        key       = "dl_yml",
+                    )
+
+            if result.saved_sql_path:
+                st.caption(f"Saved to `{result.saved_sql_path}` and `{result.saved_yml_path}`")

@@ -161,12 +161,14 @@ def get_query_history() -> pd.DataFrame:
             DATABASE_NAME,
             SCHEMA_NAME,
             EXECUTION_STATUS,
-            ROUND(TOTAL_ELAPSED_TIME / 1000, 2)   AS elapsed_seconds,
-            ROUND(BYTES_SCANNED / 1024 / 1024, 2) AS mb_scanned,
-            PARTITIONS_SCANNED,
-            PARTITIONS_TOTAL,
+            ROUND(TOTAL_ELAPSED_TIME / 1000, 2)   AS ELAPSED_SECONDS,
+            ROUND(BYTES_SCANNED / 1024 / 1024, 2) AS MB_SCANNED,
+            ROWS_PRODUCED,
+            ROUND(COMPILATION_TIME / 1000, 2)      AS COMPILATION_SECONDS,
+            ROUND(EXECUTION_TIME / 1000, 2)        AS EXECUTION_SECONDS,
             START_TIME,
-            USER_NAME
+            USER_NAME,
+            WAREHOUSE_NAME
         FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
             RESULT_LIMIT => {QUERY_HISTORY_LIMIT}
         ))
