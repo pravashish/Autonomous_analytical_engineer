@@ -1,4 +1,4 @@
-# SnwoBrain
+# SnowBrain
 
 A local SQL analysis tool for Snowflake, built with Streamlit and Ollama. No API keys. No cost per call. Everything runs on your machine.
 
