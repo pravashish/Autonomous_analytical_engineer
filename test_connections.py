@@ -20,9 +20,9 @@ try:
         max_tokens = 20,
         messages   = [{"role": "user", "content": "Say OK"}],
     )
-    print(f"  ✅ Ollama OK — model replied: {resp.choices[0].message.content.strip()}")
+    print(f"  Ollama OK — model replied: {resp.choices[0].message.content.strip()}")
 except Exception as e:
-    print(f"  ❌ Ollama FAILED: {e}")
+    print(f"  Ollama FAILED: {e}")
     print("     → Is Ollama running? Try: ollama serve")
 
 # ── Test 2: Snowflake ──────────────────────────────
@@ -44,7 +44,7 @@ try:
     cur = conn.cursor()
     cur.execute("SELECT CURRENT_USER(), CURRENT_DATABASE(), CURRENT_SCHEMA()")
     user, db, schema = cur.fetchone()
-    print(f"  ✅ Snowflake OK")
+    print(f"  Snowflake OK")
     print(f"     User:     {user}")
     print(f"     Database: {db}")
     print(f"     Schema:   {schema}")
@@ -54,9 +54,9 @@ try:
     print(f"     ARR rows: {count}")
     conn.close()
 except Exception as e:
-    print(f"  ❌ Snowflake FAILED: {e}")
+    print(f"  Snowflake FAILED: {e}")
     print("     → Check your .env file values")
 
 print("\n" + "=" * 50)
-print("Done. Fix any ❌ before running the app.")
+print("Done. Fix any errors before running the app.")
 print("=" * 50)
